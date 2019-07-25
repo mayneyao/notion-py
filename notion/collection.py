@@ -459,9 +459,13 @@ class CollectionRowBlock(PageBlock):
             filelist = []
             if not isinstance(val, list):
                 val = [val]
-            for url in val:
+            for _file in val:
+                if len(_file) == 2:
+                    filename,url = _file
+                else:
+                    filename = url.split("/")[-1]
+                    url = _file[-1]
                 url = remove_signed_prefix_as_needed(url)
-                filename = url.split("/")[-1]
                 filelist += [[filename, [['a', url]]], [',']]
             val = filelist[:-1]
         if prop["type"] in ["checkbox"]:
