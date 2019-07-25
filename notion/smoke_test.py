@@ -67,12 +67,21 @@ def run_live_smoke_test(token_v2, parent_page_url_or_id):
     row = collection.add_row()
     assert row.person == []
     row.name = "Just some data"
+    row.title = "Can reference 'title' field too!"
+    assert row.name == row.title
     row.check_yo_self = True
+    row.estimated_value = None
     row.estimated_value = 42
     row.files = ["https://www.birdlife.org/sites/default/files/styles/1600/public/slide.jpg"]
     row.person = client.current_user
+    row.tags = None
+    row.tags = []
     row.tags = ["A", "C"]
     row.where_to = "https://learningequality.org"
+    row.category = "A"
+    row.category = ""
+    row.category = None
+    row.category = "B"
 
     # Run a filtered/sorted query using the view's default parameters
     result = view.default_query().execute()
@@ -148,6 +157,22 @@ def get_collection_schema():
             }, {
                 "color": "blue",
                 "id": "77f431ab-aeb2-48c2-9e40-3a630fb86a5b",
+                "value": "C"
+            }]},
+        "=d{q": {
+            "name": "Category",
+            "type": "select",
+            "options": [{
+                "color": "orange",
+                "id": "59560dab-c776-43d1-9420-27f4011fcaec",
+                "value": "A"
+            }, {
+                "color": "default",
+                "id": "502c7016-ac57-413a-90a6-64afadfb0c44",
+                "value": "B"
+            }, {
+                "color": "blue",
+                "id": "57f431ab-aeb2-48c2-9e40-3a630fb86a5b",
                 "value": "C"
             }]},
         "LL[(": {"name": "Person", "type": "person"},

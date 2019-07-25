@@ -8,7 +8,7 @@ from requests.cookies import cookiejar_from_dict
 from urllib.parse import urljoin
 
 from .block import Block, BLOCK_TYPES
-from .collection import Collection, CollectionView, CollectionRowBlock, COLLECTION_VIEW_TYPES
+from .collection import Collection, CollectionView, CollectionRowBlock, COLLECTION_VIEW_TYPES, TemplateBlock
 from .logger import logger
 from .monitor import Monitor
 from .operations import operation_update_last_edited, build_operation
@@ -26,14 +26,17 @@ class NotionClient(object):
     for internal use -- the main one you'll likely want to use is `get_block`.
     """
 
-    def __init__(self, token_v2, start_monitoring=True, cache_key=None):
+    def __init__(self, token_v2, monitor=True, start_monitoring=True, cache_key=None):
         self.session = Session()
         self.session.cookies = cookiejar_from_dict({"token_v2": token_v2})
         cache_key = cache_key or hashlib.sha256(token_v2.encode()).hexdigest()
         self._store = RecordStore(self, cache_key=cache_key)
-        self._monitor = Monitor(self)
-        if start_monitoring:
-            self.start_monitoring()
+        if monitor:
+            self._monitor = Monitor(self)
+            if start_monitoring:
+                self.start_monitoring()
+        else:
+            self._monitor = None
         self._update_user_info()
 
     def start_monitoring(self):
@@ -57,7 +60,10 @@ class NotionClient(object):
         if not block:
             return None
         if block.get("parent_table") == "collection":
-            block_class = CollectionRowBlock
+            if block.get("is_template"):
+                block_class = TemplateBlock
+            else:
+                block_class = CollectionRowBlock
         else:
             block_class = BLOCK_TYPES.get(block.get("type", ""), Block)
         return block_class(self, block_id)
@@ -101,7 +107,7 @@ class NotionClient(object):
             assert collection is not None, "If 'url_or_id' is an ID (not a URL), you must also pass the 'collection'"
 
         view = self.get_record_data("collection_view", view_id, force_refresh=force_refresh)
-
+        
         return COLLECTION_VIEW_TYPES.get(view.get("type", ""), CollectionView)(self, view_id, collection=collection) if view else None
 
     def refresh_records(self, **kwargs):
@@ -166,19 +172,17 @@ class NotionClient(object):
         return hasattr(self, "_transaction_operations")
 
     def search_pages_with_parent(self, parent_id, search=""):
-
-        data = {"query": search, "parentId": parent_id, "limit": 10000}
-
+        data = {"query": search, "parentId": parent_id, "limit": 10000, "spaceId": self.current_space.id}
         response = self.post("searchPagesWithParent", data).json()
-
         self._store.store_recordmap(response["recordMap"])
-
         return response["results"]
 
     def create_record(self, table, parent, **kwargs):
 
         # make up a new UUID; apparently we get to choose our own!
         record_id = str(uuid.uuid4())
+
+        child_list_key = kwargs.get("child_list_key") or parent.child_list_key
 
         args={
             "id": record_id,
@@ -206,11 +210,11 @@ class NotionClient(object):
             )
 
             # add the record to the content list of the parent, if needed
-            if parent.child_list_key:
+            if child_list_key:
                 self.submit_transaction(
                     build_operation(
                         id=parent.id,
-                        path=[parent.child_list_key],
+                        path=[child_list_key],
                         args={"id": record_id},
                         command="listAfter",
                         table=parent._table,

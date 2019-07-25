@@ -3,7 +3,7 @@ from copy import deepcopy
 from datetime import datetime, date
 from tzlocal import get_localzone
 
-from .block import Block, PageBlock
+from .block import Block, PageBlock, Children
 from .logger import logger
 from .maps import property_map, field_map
 from .markdown import markdown_to_notion, notion_to_markdown
@@ -103,6 +103,14 @@ class Collection(Record):
         super().__init__(*args, **kwargs)
         self._client.refresh_collection_rows(self.id)
 
+    @property
+    def templates(self):
+        if not hasattr(self, "_templates"):
+            template_ids = self.get("template_pages", [])
+            self._client.refresh_records(block=template_ids)
+            self._templates = Templates(parent=self)
+        return self._templates
+
     def get_schema_properties(self):
         """
         Fetch a flattened list of all properties in the collection's schema.
@@ -123,6 +131,8 @@ class Collection(Record):
         for prop in self.get_schema_properties():
             if identifier == prop["id"] or slugify(identifier) == prop["slug"]:
                 return prop
+            if identifier == "title" and prop["type"] == "title":
+                return prop
         return None
 
     def add_row(self, **kwargs):
@@ -135,12 +145,17 @@ class Collection(Record):
 
         with self._client.as_atomic_transaction():
             for key, val in kwargs.items():
-                setattr(key, val)
+                setattr(row, key, val)
 
         return row
 
     def get_rows(self):
-        return [self._client.get_block(row_id) for row_id in self._client._store.get_collection_rows(self.id)]
+        rows = []
+        for row_id in self._client._store.get_collection_rows(self.id):
+            row = self._client.get_block(row_id)
+            row.__dict__['collection'] = self
+            rows.append(row)
+        return rows
 
     def _convert_diff_to_changelist(self, difference, old_val, new_val):
 
@@ -197,10 +212,24 @@ class CalendarView(CollectionView):
 
     _type = "calendar"
 
+    def build_query(self, **kwargs):
+        calendar_by = self._client.get_record_data("collection_view", self._id)['query']['calendar_by']
+        return super().build_query(calendar_by=calendar_by, **kwargs)
+
 
 class GalleryView(CollectionView):
 
     _type = "gallery"
+
+
+def _normalize_property_name(prop_name, collection):
+    if not prop_name:
+        return ""
+    else:
+        prop = collection.get_schema_property(prop_name)
+        if not prop:
+            return ""
+        return prop["id"]
 
 
 def _normalize_query_list(query_list, collection):
@@ -208,18 +237,17 @@ def _normalize_query_list(query_list, collection):
     for item in query_list:
         # convert slugs to property ids
         if "property" in item:
-            prop = collection.get_schema_property(item["property"])
-            if prop:
-                item["property"] = prop["id"]
+            item["property"] = _normalize_property_name(item["property"], collection)
         # convert any instantiated objects into their ids
         if "value" in item:
             if hasattr(item["value"], "id"):
                 item["value"] = item["value"].id
     return query_list
 
+
 class CollectionQuery(object):
 
-    def __init__(self, collection, collection_view, search="", type="table", aggregate=[], filter=[], filter_operator="and", sort=[], calendar_by=""):
+    def __init__(self, collection, collection_view, search="", type="table", aggregate=[], filter=[], filter_operator="and", sort=[], calendar_by="", group_by=""):
         self.collection = collection
         self.collection_view = collection_view
         self.search = search
@@ -228,7 +256,8 @@ class CollectionQuery(object):
         self.filter = _normalize_query_list(filter, collection)
         self.filter_operator = filter_operator
         self.sort = _normalize_query_list(sort, collection)
-        self.calendar_by = calendar_by
+        self.calendar_by = _normalize_property_name(calendar_by, collection)
+        self.group_by = _normalize_property_name(group_by, collection)
         self._client = collection._client
 
     def execute(self):
@@ -243,12 +272,17 @@ class CollectionQuery(object):
             aggregate=self.aggregate,
             filter=self.filter,
             filter_operator=self.filter_operator,
-            sort=[],
+            sort=self.sort,
             calendar_by=self.calendar_by,
+            group_by=self.group_by,
         ))
 
 
 class CollectionRowBlock(PageBlock):
+
+    @property
+    def is_template(self):
+        return self.get("is_template")
 
     @cached_property
     def collection(self):
@@ -267,11 +301,16 @@ class CollectionRowBlock(PageBlock):
             super().__setattr__(attname, value)
         elif attname in self._get_property_slugs():
             self.set_property(attname, value)
+        elif hasattr(self, attname):
+            super().__setattr__(attname, value)
         else:
             raise AttributeError("Unknown property: '{}'".format(attname))
 
     def _get_property_slugs(self):
-        return [prop["slug"] for prop in self.schema]
+        slugs = [prop["slug"] for prop in self.schema]
+        if "title" not in slugs:
+            slugs.append("title")
+        return slugs
 
     def __dir__(self):
         return self._get_property_slugs() + super().__dir__()
@@ -351,7 +390,7 @@ class CollectionRowBlock(PageBlock):
     def get_all_properties(self):
         allprops = {}
         for prop in self.schema:
-            propid = prop["name"].lower().replace(" ", "_")
+            propid = slugify(prop["name"])
             allprops[propid] = self.get_property(propid)
         return allprops
 
@@ -361,28 +400,36 @@ class CollectionRowBlock(PageBlock):
         if prop is None:
             raise AttributeError("Object does not have property '{}'".format(identifier))
 
-        path, val = self._convert_python_to_notion(val, prop)
+        path, val = self._convert_python_to_notion(val, prop, identifier=identifier)
 
         self.set(path, val)
 
-    def _convert_python_to_notion(self, val, prop):
+    def _convert_python_to_notion(self, val, prop, identifier="<unknown>"):
 
         if prop["type"] in ["title", "text"]:
+            if not val:
+                val = ""
             if not isinstance(val, str):
                 raise TypeError("Value passed to property '{}' must be a string.".format(identifier))
             val = markdown_to_notion(val)
         if prop["type"] in ["number"]:
-            if not isinstance(val, float) and not isinstance(val, int):
-                raise TypeError("Value passed to property '{}' must be an int or float.".format(identifier))
-            val = [[str(val)]]
+            if val is not None:
+                if not isinstance(val, float) and not isinstance(val, int):
+                    raise TypeError("Value passed to property '{}' must be an int or float.".format(identifier))
+                val = [[str(val)]]
         if prop["type"] in ["select"]:
-            valid_options = [p["value"].lower() for p in prop["options"]]
-            val = val.split(",")[0]
-            if val.lower() not in valid_options:
-                raise ValueError("Value '{}' not acceptable for property '{}' (valid options: {})"
-                                 .format(val, identifier, valid_options))
-            val = [[val]]
+            if not val:
+                val = None
+            else:
+                valid_options = [p["value"].lower() for p in prop["options"]]
+                val = val.split(",")[0]
+                if val.lower() not in valid_options:
+                    raise ValueError("Value '{}' not acceptable for property '{}' (valid options: {})"
+                                     .format(val, identifier, valid_options))
+                val = [[val]]
         if prop["type"] in ["multi_select"]:
+            if not val:
+                val = []
             valid_options = [p["value"].lower() for p in prop["options"]]
             if not isinstance(val, list):
                 val = [val]
@@ -451,6 +498,34 @@ class CollectionRowBlock(PageBlock):
         )
 
 
+class TemplateBlock(CollectionRowBlock):
+
+    @property
+    def is_template(self):
+        return self.get("is_template")
+
+    @is_template.setter
+    def is_template(self, val):
+        assert val is True, "Templates must have 'is_template' set to True."
+        self.set("is_template", True)
+
+
+class Templates(Children):
+
+    child_list_key = "template_pages"
+
+    def _content_list(self):
+        return self._parent.get(self.child_list_key) or []
+
+    def add_new(self, **kwargs):
+
+        kwargs["block_type"] = "page"
+        kwargs["child_list_key"] = self.child_list_key
+        kwargs["is_template"] = True
+
+        return super().add_new(**kwargs)
+
+
 class QueryResult(object):
 
     def __init__(self, collection, result):
@@ -463,7 +538,9 @@ class QueryResult(object):
         return result["blockIds"]
 
     def _get_block(self, id):
-        return CollectionRowBlock(self._client, id)
+        block = CollectionRowBlock(self._client, id)
+        block.__dict__['collection'] = self.collection
+        return block
 
     def get_aggregate(self, id):
         for agg in self.aggregates:
