@@ -60,7 +60,7 @@ def remove_signed_prefix_as_needed(url):
     if url is None:
         return
     if url.startswith(SIGNED_URL_PREFIX):
-        return unquote_plus(url[len(S3_URL_PREFIX):])
+        return unquote_plus(url[len(SIGNED_URL_PREFIX):])
     elif url.startswith(S3_URL_PREFIX_ENCODED):
         parsed = urlparse(url.replace(S3_URL_PREFIX_ENCODED, S3_URL_PREFIX))
         return "{}://{}{}".format(parsed.scheme, parsed.netloc, parsed.path)
