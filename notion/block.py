@@ -555,7 +555,7 @@ class EmbedOrUploadBlock(EmbedBlock):
 
     file_id = field_map(["file_ids", 0])
 
-    def upload_file(self, path):
+    def upload_file(self, path, _mimetype="text/plain"):
 
         LOCAL_FILE = 'LOCAL_FILE'
         URL = "URL"
@@ -566,7 +566,7 @@ class EmbedOrUploadBlock(EmbedBlock):
             path = urlparse(path).path
             _from = URL
 
-        mimetype = mimetypes.guess_type(path)[0] or "text/plain"
+        mimetype = _mimetype or mimetypes.guess_type(path)[0] or "text/plain"
         filename = os.path.split(path)[-1]
 
         data = self._client.post("getUploadFileUrl", {
