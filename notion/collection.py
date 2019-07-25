@@ -1,3 +1,10 @@
+
+import io
+import os
+import mimetypes
+from urllib.parse import urlparse
+
+import requests
 from cached_property import cached_property
 from copy import deepcopy
 from datetime import datetime, date
@@ -31,7 +38,8 @@ class NotionDate(object):
             data = obj[0][1][0][1]
         else:
             return None
-        start = cls._parse_datetime(data.get("start_date"), data.get("start_time"))
+        start = cls._parse_datetime(
+            data.get("start_date"), data.get("start_time"))
         end = cls._parse_datetime(data.get("end_date"), data.get("end_time"))
         timezone = data.get("timezone")
         return cls(start, end=end, timezone=timezone)
@@ -88,6 +96,7 @@ class NotionDate(object):
 
         return [["‣", [["d", data]]]]
 
+
 class Collection(Record):
     """
     A "collection" corresponds to what's sometimes called a "database" in the Notion UI.
@@ -95,8 +104,10 @@ class Collection(Record):
 
     _table = "collection"
 
-    name = field_map("name", api_to_python=notion_to_markdown, python_to_api=markdown_to_notion)
-    description = field_map("description", api_to_python=notion_to_markdown, python_to_api=markdown_to_notion)
+    name = field_map("name", api_to_python=notion_to_markdown,
+                     python_to_api=markdown_to_notion)
+    description = field_map(
+        "description", api_to_python=notion_to_markdown, python_to_api=markdown_to_notion)
     cover = field_map("cover")
 
     def __init__(self, *args, **kwargs):
@@ -213,7 +224,8 @@ class CalendarView(CollectionView):
     _type = "calendar"
 
     def build_query(self, **kwargs):
-        calendar_by = self._client.get_record_data("collection_view", self._id)['query']['calendar_by']
+        calendar_by = self._client.get_record_data("collection_view", self._id)[
+            'query']['calendar_by']
         return super().build_query(calendar_by=calendar_by, **kwargs)
 
 
@@ -237,7 +249,8 @@ def _normalize_query_list(query_list, collection):
     for item in query_list:
         # convert slugs to property ids
         if "property" in item:
-            item["property"] = _normalize_property_name(item["property"], collection)
+            item["property"] = _normalize_property_name(
+                item["property"], collection)
         # convert any instantiated objects into their ids
         if "value" in item:
             if hasattr(item["value"], "id"):
@@ -280,6 +293,47 @@ class CollectionQuery(object):
 
 class CollectionRowBlock(PageBlock):
 
+    def upload_file(self, attname, path, _mimetype="text/plain"):
+        LOCAL_FILE = 'LOCAL_FILE'
+        URL = "URL"
+        _from = LOCAL_FILE
+        file_url = path
+
+        if path.startswith("http"):
+            path = urlparse(path).path
+            _from = URL
+
+        mimetype = _mimetype or mimetypes.guess_type(path)[0] or "text/plain"
+        filename = os.path.split(path)[-1]
+
+        data = self._client.post("getUploadFileUrl", {
+                                 "bucket": "secure", "name": filename, "contentType": mimetype}).json()
+
+        if _from == URL:
+            resp = requests.get(file_url, stream=True)
+            f = io.BytesIO(resp.content)
+            response = requests.put(data["signedPutUrl"], data=f, headers={
+                "Content-type": mimetype})
+            response.raise_for_status()
+
+        elif _from == LOCAL_FILE:
+            with open(path, 'rb') as f:
+                response = requests.put(data["signedPutUrl"], data=f, headers={
+                                        "Content-type": mimetype})
+                response.raise_for_status()
+
+        source = data["url"]
+        val = remove_signed_prefix_as_needed(source)
+        # filelist = []
+        # val = [source]
+        # for url in val:
+        #     filename = url.split("/")[-1]
+        #     url = remove_signed_prefix_as_needed(url)
+        #     filelist += [[filename, [['a', url]]], [',']]
+        # val = filelist[:-1]
+        print(attname, val)
+        self.set_property(attname, val)
+
     @property
     def is_template(self):
         return self.get("is_template")
@@ -319,7 +373,8 @@ class CollectionRowBlock(PageBlock):
 
         prop = self.collection.get_schema_property(identifier)
         if prop is None:
-            raise AttributeError("Object does not have property '{}'".format(identifier))
+            raise AttributeError(
+                "Object does not have property '{}'".format(identifier))
 
         val = self.get(["properties", prop["id"]])
 
@@ -345,8 +400,10 @@ class CollectionRowBlock(PageBlock):
 
         for prop_id in changed_props:
             prop = self.collection.get_schema_property(prop_id)
-            old = self._convert_notion_to_python(old_val.get("properties", {}).get(prop_id), prop)
-            new = self._convert_notion_to_python(new_val.get("properties", {}).get(prop_id), prop)
+            old = self._convert_notion_to_python(
+                old_val.get("properties", {}).get(prop_id), prop)
+            new = self._convert_notion_to_python(
+                new_val.get("properties", {}).get(prop_id), prop)
             changes.append(("prop_changed", prop["slug"], (old, new)))
 
         return changes + super()._convert_diff_to_changelist(remaining, old_val, new_val)
@@ -367,17 +424,20 @@ class CollectionRowBlock(PageBlock):
         if prop["type"] in ["multi_select"]:
             val = [v.strip() for v in val[0][0].split(",")] if val else []
         if prop["type"] in ["person"]:
-            val = [self._client.get_user(item[1][0][1]) for item in val if item[0] == "‣"] if val else []
+            val = [self._client.get_user(item[1][0][1])
+                   for item in val if item[0] == "‣"] if val else []
         if prop["type"] in ["email", "phone_number", "url"]:
             val = val[0][0] if val else ""
         if prop["type"] in ["date"]:
             val = NotionDate.from_notion(val)
         if prop["type"] in ["file"]:
-            val = [add_signed_prefix_as_needed(item[1][0][1], client=self._client) for item in val if item[0] != ","] if val else []
+            val = [add_signed_prefix_as_needed(
+                item[1][0][1], client=self._client) for item in val if item[0] != ","] if val else []
         if prop["type"] in ["checkbox"]:
             val = val[0][0] == "Yes" if val else False
         if prop["type"] in ["relation"]:
-            val = [self._client.get_block(item[1][0][1]) for item in val if item[0] == "‣"] if val else []
+            val = [self._client.get_block(item[1][0][1])
+                   for item in val if item[0] == "‣"] if val else []
         if prop["type"] in ["created_time", "last_edited_time"]:
             val = self.get(prop["type"])
             val = datetime.utcfromtimestamp(val / 1000)
@@ -398,9 +458,11 @@ class CollectionRowBlock(PageBlock):
 
         prop = self.collection.get_schema_property(identifier)
         if prop is None:
-            raise AttributeError("Object does not have property '{}'".format(identifier))
+            raise AttributeError(
+                "Object does not have property '{}'".format(identifier))
 
-        path, val = self._convert_python_to_notion(val, prop, identifier=identifier)
+        path, val = self._convert_python_to_notion(
+            val, prop, identifier=identifier)
 
         self.set(path, val)
 
@@ -410,12 +472,14 @@ class CollectionRowBlock(PageBlock):
             if not val:
                 val = ""
             if not isinstance(val, str):
-                raise TypeError("Value passed to property '{}' must be a string.".format(identifier))
+                raise TypeError(
+                    "Value passed to property '{}' must be a string.".format(identifier))
             val = markdown_to_notion(val)
         if prop["type"] in ["number"]:
             if val is not None:
                 if not isinstance(val, float) and not isinstance(val, int):
-                    raise TypeError("Value passed to property '{}' must be an int or float.".format(identifier))
+                    raise TypeError(
+                        "Value passed to property '{}' must be an int or float.".format(identifier))
                 val = [[str(val)]]
         if prop["type"] in ["select"]:
             if not val:
@@ -461,16 +525,19 @@ class CollectionRowBlock(PageBlock):
                 val = [val]
             for _file in val:
                 if len(_file) == 2:
-                    filename,url = _file
+                    filename, url = _file
                 else:
+                    url = _file
                     filename = url.split("/")[-1]
-                    url = _file[-1]
                 url = remove_signed_prefix_as_needed(url)
+                print()
                 filelist += [[filename, [['a', url]]], [',']]
             val = filelist[:-1]
+            print(val)
         if prop["type"] in ["checkbox"]:
             if not isinstance(val, bool):
-                raise TypeError("Value passed to property '{}' must be a bool.".format(identifier))
+                raise TypeError(
+                    "Value passed to property '{}' must be a bool.".format(identifier))
             val = [["Yes" if val else "No"]]
         if prop["type"] in ["relation"]:
             pagelist = []
@@ -614,6 +681,8 @@ class GalleryQueryResult(QueryResult):
     _type = "gallery"
 
 
-COLLECTION_VIEW_TYPES = {cls._type: cls for cls in locals().values() if type(cls) == type and issubclass(cls, CollectionView) and hasattr(cls, "_type")}
+COLLECTION_VIEW_TYPES = {cls._type: cls for cls in locals().values() if type(
+    cls) == type and issubclass(cls, CollectionView) and hasattr(cls, "_type")}
 
-QUERY_RESULT_TYPES = {cls._type: cls for cls in locals().values() if type(cls) == type and issubclass(cls, QueryResult) and hasattr(cls, "_type")}
+QUERY_RESULT_TYPES = {cls._type: cls for cls in locals().values() if type(
+    cls) == type and issubclass(cls, QueryResult) and hasattr(cls, "_type")}
