@@ -6,6 +6,7 @@ import uuid
 from requests import Session, HTTPError
 from requests.cookies import cookiejar_from_dict
 from urllib.parse import urljoin
+from tzlocal import get_localzone
 
 from .block import Block, BLOCK_TYPES
 from .collection import Collection, CollectionView, CollectionRowBlock, COLLECTION_VIEW_TYPES, TemplateBlock
@@ -26,7 +27,11 @@ class NotionClient(object):
     for internal use -- the main one you'll likely want to use is `get_block`.
     """
 
-    def __init__(self, token_v2, monitor=True, start_monitoring=True, cache_key=None):
+    def __init__(self, token_v2, monitor=True, start_monitoring=True, cache_key=None, timezone=None):
+        try:
+            self.timezone = str(get_localzone())
+        except:
+            self.timezone = timezone
         self.session = Session()
         self.session.cookies = cookiejar_from_dict({"token_v2": token_v2})
         cache_key = cache_key or hashlib.sha256(token_v2.encode()).hexdigest()
@@ -45,7 +50,8 @@ class NotionClient(object):
     def _update_user_info(self):
         records = self.post("loadUserContent", {}).json()["recordMap"]
         self._store.store_recordmap(records)
-        self.current_user = self.get_user(list(records["notion_user"].keys())[0])
+        self.current_user = self.get_user(
+            list(records["notion_user"].keys())[0])
         self.current_space = self.get_space(list(records["space"].keys())[0])
 
     def get_record_data(self, table, id, force_refresh=False):
@@ -56,7 +62,8 @@ class NotionClient(object):
         Retrieve an instance of a subclass of Block that maps to the block/page identified by the URL or ID passed in.
         """
         block_id = extract_id(url_or_id)
-        block = self.get_record_data("block", block_id, force_refresh=force_refresh)
+        block = self.get_record_data(
+            "block", block_id, force_refresh=force_refresh)
         if not block:
             return None
         if block.get("parent_table") == "collection":
@@ -72,21 +79,24 @@ class NotionClient(object):
         """
         Retrieve an instance of Collection that maps to the collection identified by the ID passed in.
         """
-        coll = self.get_record_data("collection", collection_id, force_refresh=force_refresh)
+        coll = self.get_record_data(
+            "collection", collection_id, force_refresh=force_refresh)
         return Collection(self, collection_id) if coll else None
 
     def get_user(self, user_id, force_refresh=False):
         """
         Retrieve an instance of User that maps to the notion_user identified by the ID passed in.
         """
-        user = self.get_record_data("notion_user", user_id, force_refresh=force_refresh)
+        user = self.get_record_data(
+            "notion_user", user_id, force_refresh=force_refresh)
         return User(self, user_id) if user else None
 
     def get_space(self, space_id, force_refresh=False):
         """
         Retrieve an instance of Space that maps to the space identified by the ID passed in.
         """
-        space = self.get_record_data("space", space_id, force_refresh=force_refresh)
+        space = self.get_record_data(
+            "space", space_id, force_refresh=force_refresh)
         return Space(self, space_id) if space else None
 
     def get_collection_view(self, url_or_id, collection=None, force_refresh=False):
@@ -101,13 +111,15 @@ class NotionClient(object):
             if not match:
                 raise Exception("Invalid collection view URL")
             block_id, view_id = match.groups()
-            collection = self.get_block(block_id, force_refresh=force_refresh).collection
+            collection = self.get_block(
+                block_id, force_refresh=force_refresh).collection
         else:
             view_id = url_or_id
             assert collection is not None, "If 'url_or_id' is an ID (not a URL), you must also pass the 'collection'"
 
-        view = self.get_record_data("collection_view", view_id, force_refresh=force_refresh)
-        
+        view = self.get_record_data(
+            "collection_view", view_id, force_refresh=force_refresh)
+
         return COLLECTION_VIEW_TYPES.get(view.get("type", ""), CollectionView)(self, view_id, collection=collection) if view else None
 
     def refresh_records(self, **kwargs):
@@ -128,8 +140,10 @@ class NotionClient(object):
         url = urljoin(API_BASE_URL, endpoint)
         response = self.session.post(url, json=data)
         if response.status_code == 400:
-            logger.error("Got 400 error attempting to POST to {}, with data: {}".format(endpoint, json.dumps(data, indent=2)))
-            raise HTTPError(response.json().get("message", "There was an error (400) submitting the request."))
+            logger.error("Got 400 error attempting to POST to {}, with data: {}".format(
+                endpoint, json.dumps(data, indent=2)))
+            raise HTTPError(response.json().get(
+                "message", "There was an error (400) submitting the request."))
         response.raise_for_status()
         return response
 
@@ -142,8 +156,10 @@ class NotionClient(object):
             operations = [operations]
 
         if update_last_edited:
-            updated_blocks = set([op["id"] for op in operations if op["table"] == "block"])
-            operations += [operation_update_last_edited(self.current_user.id, block_id) for block_id in updated_blocks]
+            updated_blocks = set(
+                [op["id"] for op in operations if op["table"] == "block"])
+            operations += [operation_update_last_edited(
+                self.current_user.id, block_id) for block_id in updated_blocks]
 
         # if we're in a transaction, just add these operations to the list; otherwise, execute them right away
         if self.in_transaction():
@@ -172,7 +188,8 @@ class NotionClient(object):
         return hasattr(self, "_transaction_operations")
 
     def search_pages_with_parent(self, parent_id, search=""):
-        data = {"query": search, "parentId": parent_id, "limit": 10000, "spaceId": self.current_space.id}
+        data = {"query": search, "parentId": parent_id,
+                "limit": 10000, "spaceId": self.current_space.id}
         response = self.post("searchPagesWithParent", data).json()
         self._store.store_recordmap(response["recordMap"])
         return response["results"]
@@ -184,7 +201,7 @@ class NotionClient(object):
 
         child_list_key = kwargs.get("child_list_key") or parent.child_list_key
 
-        args={
+        args = {
             "id": record_id,
             "version": 1,
             "alive": True,
@@ -255,4 +272,3 @@ class Transaction(object):
             self.client.submit_transaction(operations)
 
         self.client._store.handle_post_transaction_refreshing()
-

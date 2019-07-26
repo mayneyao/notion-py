@@ -254,7 +254,7 @@ class RecordStore(object):
                 "loadContentCover": True,
                 "query": search,
                 "userLocale": "en",
-                "userTimeZone": str(get_localzone()),
+                "userTimeZone": str(self._client.timezone or get_localzone()),
                 "type": type,
             },
             "query": {
