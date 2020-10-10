@@ -10,12 +10,17 @@ DATA_DIR = os.environ.get("NOTION_DATA_DIR", str(Path(os.path.expanduser("~")).j
 CACHE_DIR = str(Path(DATA_DIR).joinpath("cache"))
 LOG_FILE = str(Path(DATA_DIR).joinpath("notion.log"))
 
-try:
-	os.makedirs(DATA_DIR)
-except FileExistsError:
-	pass
+DO_NOT_MAKE_DIR = os.environ.get("DO_NOT_MAKE_DIR", False)
 
-try:
-	os.makedirs(CACHE_DIR)
-except FileExistsError:
-	pass
+if not DO_NOT_MAKE_DIR:
+	try:
+		if  log_level != "disabled":
+			os.makedirs(DATA_DIR)
+	except FileExistsError:
+		pass
+
+	try:
+		if  log_level != "disabled":
+			os.makedirs(CACHE_DIR)
+	except FileExistsError:
+		pass
