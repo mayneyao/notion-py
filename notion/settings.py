@@ -14,13 +14,11 @@ DO_NOT_MAKE_DIR = os.environ.get("DO_NOT_MAKE_DIR", False)
 
 if not DO_NOT_MAKE_DIR:
 	try:
-		if  log_level != "disabled":
-			os.makedirs(DATA_DIR)
+		os.makedirs(DATA_DIR)
 	except FileExistsError:
 		pass
 
 	try:
-		if  log_level != "disabled":
-			os.makedirs(CACHE_DIR)
+		os.makedirs(CACHE_DIR)
 	except FileExistsError:
 		pass
