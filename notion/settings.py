@@ -9,16 +9,3 @@ S3_URL_PREFIX_ENCODED = "https://s3.us-west-2.amazonaws.com/secure.notion-static
 DATA_DIR = os.environ.get("NOTION_DATA_DIR", str(Path(os.path.expanduser("~")).joinpath(".notion-py")))
 CACHE_DIR = str(Path(DATA_DIR).joinpath("cache"))
 LOG_FILE = str(Path(DATA_DIR).joinpath("notion.log"))
-
-DO_NOT_MAKE_DIR = os.environ.get("DO_NOT_MAKE_DIR", False)
-
-if not DO_NOT_MAKE_DIR:
-	try:
-		os.makedirs(DATA_DIR)
-	except FileExistsError:
-		pass
-
-	try:
-		os.makedirs(CACHE_DIR)
-	except FileExistsError:
-		pass
